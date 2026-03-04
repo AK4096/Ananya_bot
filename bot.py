@@ -14,13 +14,13 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 # ── PASTE YOUR KEYS HERE ─────────────────────────────────────────────────────
-TOKEN         = "8622940572:AAHinIW7d1MaBArLnsrmc61-rFvmUslqaS8"
-GROQ_KEY      = "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"
-REPLICATE_KEY = "r8_HsaPJU2vupCKGSLk2iVivzzzIw2fD623d8rOY"
-ELEVEN_KEY    = "sk_49db3ce9e0403db486430682f8de0ede833fc1e94b7bc703"
+TOKEN         = os.environ.get("TOKEN")
+GROQ_KEY      = os.environ.get("GROQ_KEY")
+REPLICATE_KEY = os.environ.get("REPLICATE_KEY")
+ELEVEN_KEY    = os.environ.get("ELEVEN_KEY")
 ELEVEN_VOICE  = "21m00Tcm4TlvDq8ikWAM"
-MOJO_API_KEY  = "d75b869880d39202a0d27f5cf4600d46"
-MOJO_AUTH     = "42580fe437fab48b0d51b4302b1dbea0"
+MOJO_API_KEY  = os.environ.get("MOJO_API_KEY")
+MOJO_AUTH     = os.environ.get("MOJO_AUTH")
 # ─────────────────────────────────────────────────────────────────────────────
 
 os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
