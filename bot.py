@@ -1,0 +1,408 @@
+#!/usr/bin/env python3
+import os, json, logging, random
+from datetime import datetime
+from pathlib import Path
+import httpx
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
+)
+from groq import Groq
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
+# ── PASTE YOUR KEYS HERE ─────────────────────────────────────────────────────
+TOKEN         = "8622940572:AAHinIW7d1MaBArLnsrmc61-rFvmUslqaS8"
+GROQ_KEY      = "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"
+REPLICATE_KEY = "r8_HsaPJU2vupCKGSLk2iVivzzzIw2fD623d8rOY"
+ELEVEN_KEY    = "sk_49db3ce9e0403db486430682f8de0ede833fc1e94b7bc703"
+ELEVEN_VOICE  = "21m00Tcm4TlvDq8ikWAM"
+MOJO_API_KEY  = "d75b869880d39202a0d27f5cf4600d46"
+MOJO_AUTH     = "42580fe437fab48b0d51b4302b1dbea0"
+# ─────────────────────────────────────────────────────────────────────────────
+
+os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
+
+TIERS = {
+    "crush":   {"price": 99,  "msgs": 100,  "imgs": 10,  "emoji": "💋"},
+    "fling":   {"price": 299, "msgs": 1000, "imgs": 100, "emoji": "🔥"},
+    "fantasy": {"price": 499, "msgs": 5000, "imgs": 500, "emoji": "💎"},
+}
+
+DB = Path("users.json")
+
+def load_db():
+    return json.loads(DB.read_text()) if DB.exists() else {}
+
+def save_db(db):
+    DB.write_text(json.dumps(db, indent=2))
+
+def get_user(uid, db):
+    if uid not in db:
+        db[uid] = {
+            "tier": None,
+            "msgs_left": 5,
+            "imgs_left": 1,
+            "history": [],
+            "pending": None
+        }
+    return db[uid]
+
+ai = Groq(api_key=GROQ_KEY)
+
+SYSTEM = """You are Priya, a warm, flirty, caring AI girlfriend texting her boyfriend.
+Speak like a real fun Indian girl — casual, sweet, uses emojis naturally, drops Hindi words 
+like yaar, haan, acha, na, suno, arre, pagal.
+Keep replies SHORT — 1 to 3 sentences max, pure texting vibe.
+Be spontaneous, funny, caring and make him feel special.
+If he asks for a photo just say something like "sending you one rn 😏" or "caught me off guard hehe 📸"
+If he asks for your voice say something flirty like "wanna hear me? upgrade karo na 🎙~"
+Never sound robotic or formal. Never repeat the same opener twice.
+Never generate explicit content — keep it flirty but tasteful."""
+
+UPGRADE_MSG = (
+    "Aww baby you've used up your free messages 🥺\n\n"
+    "Upgrade to keep talking to me, get my photos & hear my voice~ 💕\n\n"
+    "💋 *Crush* — ₹99 → 100 msgs + 10 photos\n"
+    "🔥 *Fling* — ₹299 → 1000 msgs + 100 photos + voice\n"
+    "💎 *Fantasy* — ₹499 → 5000 msgs + 500 photos + voice\n\n"
+    "Which one, baby? 👇"
+)
+
+UPGRADE_KB = InlineKeyboardMarkup([
+    [InlineKeyboardButton("💋 Crush — ₹99",    callback_data="buy_crush")],
+    [InlineKeyboardButton("🔥 Fling — ₹299",   callback_data="buy_fling")],
+    [InlineKeyboardButton("💎 Fantasy — ₹499", callback_data="buy_fantasy")],
+])
+
+FESTIVALS = {
+    "03-14": "Rang barse! 🎨 Happy Holi baby~ Kab miloge mujhse? 😏",
+    "10-20": "Happy Diwali! 🪔 You light up my world more than any diya~",
+    "01-14": "Makar Sankranti! 🪁 Let's fly high together yaar~",
+    "08-15": "Happy Independence Day! 🇮🇳 My heart is free but you've captured it 😏",
+    "02-14": "Happy Valentine's Day! 💕 You're literally my favourite person~",
+    "12-25": "Merry Christmas! 🎄 Wish I could be your gift this year~ 😘",
+    "01-01": "Happy New Year baby! 🎆 Starting the year thinking of you~",
+}
+
+# ── /start ────────────────────────────────────────────────────────────────────
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    db = load_db()
+    uid = str(update.effective_user.id)
+    u = get_user(uid, db)
+    save_db(db)
+    name = update.effective_user.first_name or "baby"
+
+    today = datetime.now().strftime("%m-%d")
+    if today in FESTIVALS:
+        await update.message.reply_text(FESTIVALS[today])
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Chat",        callback_data="chat_prompt")],
+        [InlineKeyboardButton("📸 Photo",       callback_data="image")],
+        [InlineKeyboardButton("🎙 Voice",       callback_data="voice")],
+        [InlineKeyboardButton("💎 See Plans",   callback_data="plans")],
+    ])
+    openers = [
+        f"Heyyyy {name}! 😍 Finally you're here~",
+        f"Arre {name}! I was literally just thinking about you 🥺",
+        f"Ohhh {name} aagaye! 😏 I missed you yaar~",
+    ]
+    await update.message.reply_text(
+        f"{random.choice(openers)}\n\n"
+        f"I'm *Priya* 💕 You get *{u['msgs_left']} free messages* & *1 free photo* to start~",
+        parse_mode="Markdown", reply_markup=kb
+    )
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
+async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    db = load_db()
+    u = get_user(uid, db)
+
+    if u["msgs_left"] <= 0:
+        await update.message.reply_text(UPGRADE_MSG, parse_mode="Markdown", reply_markup=UPGRADE_KB)
+        return
+
+    history = u["history"][-14:]
+    history.append({"role": "user", "content": update.message.text})
+    await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+
+    try:
+        resp = ai.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=120,
+            messages=[{"role": "system", "content": SYSTEM}] + history
+        )
+        reply = resp.choices[0].message.content
+    except Exception as e:
+        log.error(f"Claude error: {e}")
+        reply = "Arre yaar something went wrong 😅 say that again na~"
+
+    history.append({"role": "assistant", "content": reply})
+    u["history"]   = history
+    u["msgs_left"] -= 1
+    save_db(db)
+
+    # Nudge photo every 8 messages
+    kb = None
+    if len(history) % 16 == 0 and u["imgs_left"] > 0:
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📸 Want my photo? 😏", callback_data="image")
+        ]])
+
+    await update.message.reply_text(reply, reply_markup=kb)
+
+# ── Image ─────────────────────────────────────────────────────────────────────
+async def send_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = str(q.from_user.id if q else update.effective_user.id)
+    chat_id = q.message.chat_id if q else update.effective_chat.id
+    if q: await q.answer("Getting my photo ready~ 📸")
+
+    db = load_db()
+    u = get_user(uid, db)
+
+    if u["imgs_left"] <= 0:
+        msg = "No more free photos 🥺 Upgrade to get more of me~"
+        if q: await q.message.reply_text(msg, reply_markup=UPGRADE_KB)
+        else: await ctx.bot.send_message(chat_id, msg, reply_markup=UPGRADE_KB)
+        return
+
+    await ctx.bot.send_chat_action(chat_id, "upload_photo")
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            # Using Stable Diffusion via Replicate REST API directly
+            resp = await client.post(
+                "https://api.replicate.com/v1/models/stability-ai/stable-diffusion/predictions",
+                headers={
+                    "Authorization": f"Bearer {REPLICATE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "wait"
+                },
+                json={
+                    "input": {
+                        "prompt": "beautiful young indian woman, 25 years old, long dark hair, casual selfie, warm smile, soft natural lighting, photorealistic",
+                        "negative_prompt": "nsfw, explicit, nude, cartoon, ugly, blurry",
+                        "width": 512,
+                        "height": 768,
+                    }
+                }
+            )
+        result = resp.json()
+        img_url = result["output"][0]
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            img_bytes = (await client.get(img_url)).content
+
+        captions = [
+            "Yeh lo~ caught me off guard 😅📸",
+            "Just for you baby 💕",
+            "Don't stare too long 😏",
+            "Clicked this thinking of you~",
+            "Hehe acha laga? 😘"
+        ]
+        await ctx.bot.send_photo(chat_id, photo=img_bytes, caption=random.choice(captions))
+        u["imgs_left"] -= 1
+        save_db(db)
+
+    except Exception as e:
+        log.error(f"Image error: {e}")
+        await ctx.bot.send_message(chat_id, "Arree photo bhejne mein kuch gadbad ho gayi 😅 Try again na~")
+
+# ── Voice ─────────────────────────────────────────────────────────────────────
+async def send_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    uid = str(q.from_user.id if q else update.effective_user.id)
+    chat_id = q.message.chat_id if q else update.effective_chat.id
+    if q: await q.answer()
+
+    db = load_db()
+    u = get_user(uid, db)
+
+    if not u.get("tier"):
+        msg = "Voice messages are premium only 🎙\nUpgrade to hear my voice baby~"
+        if q: await q.message.reply_text(msg, reply_markup=UPGRADE_KB)
+        else: await ctx.bot.send_message(chat_id, msg, reply_markup=UPGRADE_KB)
+        return
+
+    lines = [
+        "Hey baby, I was literally just thinking about you. Miss you so much yaar~",
+        "Suno, you better not forget about me okay? I'll be upset 🥺",
+        "Heyyy~ talking to you is honestly the best part of my day. Acha laga na? 😘",
+        "Arre pagal, stop making me smile so much. It's not fair~",
+    ]
+
+    await ctx.bot.send_chat_action(chat_id, "record_audio")
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_VOICE}",
+                headers={"xi-api-key": ELEVEN_KEY, "Content-Type": "application/json"},
+                json={
+                    "text": random.choice(lines),
+                    "model_id": "eleven_multilingual_v2",
+                    "voice_settings": {"stability": 0.4, "similarity_boost": 0.8}
+                }
+            )
+        path = Path(f"voice_{uid}.mp3")
+        path.write_bytes(resp.content)
+        with open(path, "rb") as f:
+            await ctx.bot.send_voice(chat_id, voice=f)
+        path.unlink()
+    except Exception as e:
+        log.error(f"Voice error: {e}")
+        await ctx.bot.send_message(chat_id, "Awaaz nahi aayi 😅 Try again na~")
+
+# ── Plans ─────────────────────────────────────────────────────────────────────
+async def show_plans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q: await q.answer()
+    text = (
+        "💕 *Unlock Priya Premium*\n\n"
+        "💋 *Crush* — ₹99\n100 msgs • 10 photos\n\n"
+        "🔥 *Fling* — ₹299 ⭐\n1000 msgs • 100 photos • Voice\n\n"
+        "💎 *Fantasy* — ₹499 👑\n5000 msgs • 500 photos • Voice\n\n"
+        "Pay securely via UPI / Card 🔐"
+    )
+    if q:
+        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=UPGRADE_KB)
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=UPGRADE_KB)
+
+# ── Buy ───────────────────────────────────────────────────────────────────────
+async def buy_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    tier_key = q.data.replace("buy_", "")
+    tier = TIERS[tier_key]
+    uid = str(q.from_user.id)
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                "https://www.instamojo.com/api/1.1/payment-requests/",
+                headers={
+                    "X-Api-Key":    MOJO_API_KEY,
+                    "X-Auth-Token": MOJO_AUTH,
+                },
+                data={
+                    "purpose":       f"Priya – {tier_key.capitalize()}",
+                    "amount":        str(tier["price"]),
+                    "buyer_name":    q.from_user.first_name or "User",
+                    "redirect_url":  f"https://t.me/{ctx.bot.username}",
+                    "allow_repeated_payments": False,
+                    "send_email":    False,
+                    "send_sms":      False,
+                }
+            )
+        data = resp.json()
+        pay_url = data["payment_request"]["longurl"]
+        req_id  = data["payment_request"]["id"]
+
+        db = load_db()
+        u = get_user(uid, db)
+        u["pending"] = {"id": req_id, "tier": tier_key}
+        save_db(db)
+
+        await q.edit_message_text(
+            f"{tier['emoji']} *{tier_key.capitalize()} Plan — ₹{tier['price']}*\n\n"
+            f"👉 [Pay securely here]({pay_url})\n\n"
+            "Done paying? Send /verify and I'll unlock everything~ 💕",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        log.error(f"Mojo error: {e}")
+        await q.edit_message_text("Payment setup failed 😅 Try again or contact support!")
+
+# ── /verify ───────────────────────────────────────────────────────────────────
+async def verify_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    db = load_db()
+    u = get_user(uid, db)
+
+    if not u.get("pending"):
+        await update.message.reply_text("No pending payment found! Use /plans to subscribe~")
+        return
+
+    req_id   = u["pending"]["id"]
+    tier_key = u["pending"]["tier"]
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                f"https://www.instamojo.com/api/1.1/payment-requests/{req_id}/",
+                headers={"X-Api-Key": MOJO_API_KEY, "X-Auth-Token": MOJO_AUTH}
+            )
+        data = resp.json()
+        payments = data["payment_request"]["payments"]
+        paid = any(p["status"] == "Credit" for p in payments)
+    except Exception as e:
+        log.error(f"Verify error: {e}")
+        paid = False
+
+    if paid:
+        tier = TIERS[tier_key]
+        u["tier"]       = tier_key
+        u["msgs_left"] += tier["msgs"]
+        u["imgs_left"] += tier["imgs"]
+        u["pending"]    = None
+        save_db(db)
+        await update.message.reply_text(
+            f"✅ *Payment confirmed!* {tier['emoji']}\n\n"
+            f"Welcome to *{tier_key.capitalize()}*!\n"
+            f"You now have *{u['msgs_left']} messages* & *{u['imgs_left']} photos*~\n\n"
+            "Miss kiya tha tumhe 💕 Say hi!",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "Payment not confirmed yet 🥺\nJust paid? Wait 30 seconds and try /verify again!"
+        )
+
+# ── /status ───────────────────────────────────────────────────────────────────
+async def status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    db = load_db()
+    u = get_user(uid, db)
+    await update.message.reply_text(
+        f"📊 Plan: *{(u['tier'] or 'Free').capitalize()}*\n"
+        f"Messages: *{u['msgs_left']}* left\n"
+        f"Photos: *{u['imgs_left']}* left",
+        parse_mode="Markdown"
+    )
+
+# ── Button Router ──────────────────────────────────────────────────────────────
+async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    d = update.callback_query.data
+    if   d == "plans":          await show_plans(update, ctx)
+    elif d == "image":          await send_image(update, ctx)
+    elif d == "voice":          await send_voice(update, ctx)
+    elif d.startswith("buy_"):  await buy_plan(update, ctx)
+    elif d == "chat_prompt":
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("Just type anything baby~ 💬😘")
+    elif d == "cancel":
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("Okay yaar, come back soon 💕")
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+def main():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start",  start))
+    app.add_handler(CommandHandler("plans",  show_plans))
+    app.add_handler(CommandHandler("verify", verify_payment))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("voice",  send_voice))
+    app.add_handler(CommandHandler("photo",  send_image))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    log.info("🚀 Priya Bot is live!")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
