@@ -387,7 +387,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
         await update.callback_query.edit_message_text("okay yaar, come back soon 💕")
 
-def main():
+async def main():
     app = Application.builder().token(TOKEN).build()
     await load_images()
     app.add_handler(CommandHandler("start",  start))
@@ -407,4 +407,4 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
