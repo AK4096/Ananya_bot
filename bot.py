@@ -282,7 +282,7 @@ async def buy_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tier = TIERS[tier_key]
     uid = str(q.from_user.id)
 
-    pay_url = f"https://www.instamojo.com/@Anu_S36/?data_name=Priya+{tier_key.capitalize()}&data_amount={tier['price']}&data_readonly=data_amount"
+    pay_url = "https://www.instamojo.com/@Anu_S36/"
 
     db = load_db()
     u = get_user(uid, db)
