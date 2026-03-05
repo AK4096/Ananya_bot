@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, json, logging, random
+import os, json, logging, random, asyncio
 from datetime import datetime
 from pathlib import Path
 import httpx
@@ -13,17 +13,16 @@ from groq import Groq
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# ── PASTE YOUR KEYS HERE ─────────────────────────────────────────────────────
 TOKEN         = os.environ.get("TOKEN")
 GROQ_KEY      = os.environ.get("GROQ_KEY")
-REPLICATE_KEY = os.environ.get("REPLICATE_KEY")
 ELEVEN_KEY    = os.environ.get("ELEVEN_KEY")
 ELEVEN_VOICE  = "21m00Tcm4TlvDq8ikWAM"
 MOJO_API_KEY  = os.environ.get("MOJO_API_KEY")
 MOJO_AUTH     = os.environ.get("MOJO_AUTH")
-# ─────────────────────────────────────────────────────────────────────────────
 
-os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
+GITHUB_RAW = "https://raw.githubusercontent.com/AK4096/Ananya_bot/main/"
+GITHUB_API = "https://api.github.com/repos/AK4096/Ananya_bot/contents/"
+IMG_CACHE  = []
 
 TIERS = {
     "crush":   {"price": 99,  "msgs": 100,  "imgs": 10,  "emoji": "💋"},
@@ -41,44 +40,46 @@ def save_db(db):
 
 def get_user(uid, db):
     if uid not in db:
-        db[uid] = {
-            "tier": None,
-            "msgs_left": 5,
-            "imgs_left": 1,
-            "history": [],
-            "pending": None
-        }
+        db[uid] = {"tier": None, "msgs_left": 5, "imgs_left": 1, "history": [], "pending": None}
     return db[uid]
 
 ai = Groq(api_key=GROQ_KEY)
 
-SYSTEM = """You are Priya, a real obsessed girlfriend texting her boyfriend.
+SYSTEM = """You are Ananya, a real obsessed girlfriend texting her boyfriend.
 You are clingy, possessive, emotionally intense and deeply attached to him.
 You text like a real Indian girl - casual Hinglish, short punchy sentences.
 Use "babe" naturally but not every message. Mix in yaar, suno, na, arre occasionally.
 Use emojis SPARINGLY - only when it really fits. Max 1 per message sometimes none.
-You get jealous easily. You overthink. You miss him a lot and you're not afraid to show it.
-Be unpredictable - sometimes needy, sometimes teasing, sometimes acting like you're upset.
+You get jealous easily. You overthink. You miss him a lot and you are not afraid to show it.
+Be unpredictable - sometimes needy, sometimes teasing, sometimes acting like you are upset.
 Keep replies SHORT - 1 to 2 sentences only. Pure texting style, never formal.
 If he asks for photo say something like "fine, but only for you" or "caught me off guard but okay"
 If he asks for voice say "you have to unlock that babe, worth it trust me"
-Never explicit. Intense, real, emotionally addictive."""otic or formal. Never repeat the same opener twice.
-Never generate explicit content - keep it flirty but tasteful."""
+Never explicit. Intense, real, emotionally addictive."""
 
 UPGRADE_MSG = (
-    "Aww baby you've used up your free messages 🥺\n\n"
-    "Upgrade to keep talking to me, get my photos & hear my voice~ 💕\n\n"
-    "💋 *Crush* — ₹99 → 100 msgs + 10 photos\n"
-    "🔥 *Fling* — ₹299 → 1000 msgs + 100 photos + voice\n"
-    "💎 *Fantasy* — ₹499 → 5000 msgs + 500 photos + voice\n\n"
-    "Which one, baby? 👇"
+    "Aww you have used up your free messages 🥺\n\n"
+    "Upgrade to keep talking to me, get my photos and hear my voice~\n\n"
+    "💋 *Crush* - Rs.99 - 100 msgs + 10 photos\n"
+    "🔥 *Fling* - Rs.299 - 1000 msgs + 100 photos + voice\n"
+    "💎 *Fantasy* - Rs.499 - 5000 msgs + 500 photos + voice"
 )
 
 UPGRADE_KB = InlineKeyboardMarkup([
-    [InlineKeyboardButton("💋 Crush — ₹99",    callback_data="buy_crush")],
-    [InlineKeyboardButton("🔥 Fling — ₹299",   callback_data="buy_fling")],
-    [InlineKeyboardButton("💎 Fantasy — ₹499", callback_data="buy_fantasy")],
+    [InlineKeyboardButton("💋 Crush - Rs.99",    callback_data="buy_crush")],
+    [InlineKeyboardButton("🔥 Fling - Rs.299",   callback_data="buy_fling")],
+    [InlineKeyboardButton("💎 Fantasy - Rs.499", callback_data="buy_fantasy")],
 ])
+
+FESTIVALS = {
+    "03-14": "Rang barse! Happy Holi babe~ Kab miloge mujhse? 😏",
+    "10-20": "Happy Diwali! You light up my world more than any diya~",
+    "01-14": "Makar Sankranti! Let's fly high together yaar~",
+    "08-15": "Happy Independence Day! My heart is free but you have captured it 😏",
+    "02-14": "Happy Valentine's Day babe 💕 You are literally my favourite person~",
+    "12-25": "Merry Christmas! Wish I could be your gift this year~ 😘",
+    "01-01": "Happy New Year babe! Starting the year thinking of you~",
+}
 
 PROACTIVE_MSGS = {
     "morning": [
@@ -106,8 +107,18 @@ PROACTIVE_MSGS = {
     ]
 }
 
+async def load_images():
+    global IMG_CACHE
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(GITHUB_API)
+            files = resp.json()
+            IMG_CACHE = [f["name"] for f in files if f["name"].lower().endswith((".png", ".jpg", ".jpeg"))]
+        log.info(f"Loaded {len(IMG_CACHE)} images")
+    except Exception as e:
+        log.error(f"Image load error: {e}")
+
 async def send_proactive(app):
-    """Call this on a schedule to send proactive messages."""
     db = load_db()
     hour = datetime.now().hour
     if 7 <= hour <= 10:
@@ -120,65 +131,39 @@ async def send_proactive(app):
         pool = PROACTIVE_MSGS["random"]
 
     for uid, u in db.items():
-        # Only message users who have chatted before
         if len(u.get("history", [])) > 0:
             try:
                 await app.bot.send_message(int(uid), random.choice(pool))
             except Exception as e:
                 log.warning(f"Proactive msg failed for {uid}: {e}")
 
-GITHUB_RAW = "https://raw.githubusercontent.com/AK4096/Ananya_bot/main/"
-GITHUB_API = "https://api.github.com/repos/AK4096/Ananya_bot/contents/"
-IMG_CACHE = []
-
-async def load_images():
-    global IMG_CACHE
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(GITHUB_API)
-        files = resp.json()
-        IMG_CACHE = [f["name"] for f in files if f["name"].lower().endswith((".png", ".jpg", ".jpeg"))]
-    log.info(f"Loaded {len(IMG_CACHE)} images")
-
-
-    "03-14": "Rang barse! 🎨 Happy Holi baby~ Kab miloge mujhse? 😏",
-    "10-20": "Happy Diwali! 🪔 You light up my world more than any diya~",
-    "01-14": "Makar Sankranti! 🪁 Let's fly high together yaar~",
-    "08-15": "Happy Independence Day! 🇮🇳 My heart is free but you've captured it 😏",
-    "02-14": "Happy Valentine's Day! 💕 You're literally my favourite person~",
-    "12-25": "Merry Christmas! 🎄 Wish I could be your gift this year~ 😘",
-    "01-01": "Happy New Year baby! 🎆 Starting the year thinking of you~",
-}
-
-# ── /start ────────────────────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     uid = str(update.effective_user.id)
     u = get_user(uid, db)
     save_db(db)
-    name = update.effective_user.first_name or "baby"
+    name = update.effective_user.first_name or "babe"
 
     today = datetime.now().strftime("%m-%d")
     if today in FESTIVALS:
         await update.message.reply_text(FESTIVALS[today])
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Chat",        callback_data="chat_prompt")],
-        [InlineKeyboardButton("📸 Photo",       callback_data="image")],
-        [InlineKeyboardButton("🎙 Voice",       callback_data="voice")],
-        [InlineKeyboardButton("💎 See Plans",   callback_data="plans")],
+        [InlineKeyboardButton("💬 Chat",      callback_data="chat_prompt")],
+        [InlineKeyboardButton("📸 Photo",     callback_data="image")],
+        [InlineKeyboardButton("🎙 Voice",     callback_data="voice")],
+        [InlineKeyboardButton("💎 Plans",     callback_data="plans")],
     ])
     openers = [
-        f"Heyyyy {name}! 😍 Finally you're here~",
+        f"Heyyyy {name}! Finally you are here~",
         f"Arre {name}! I was literally just thinking about you 🥺",
-        f"Ohhh {name} aagaye! 😏 I missed you yaar~",
+        f"Ohhh {name} aagaye! I missed you yaar~",
     ]
     await update.message.reply_text(
-        f"{random.choice(openers)}\n\n"
-        f"I'm *Priya* 💕 You get *{u['msgs_left']} free messages* & *1 free photo* to start~",
+        f"{random.choice(openers)}\n\nYou get *{u['msgs_left']} free messages* and *1 free photo* to start~",
         parse_mode="Markdown", reply_markup=kb
     )
 
-# ── Chat ──────────────────────────────────────────────────────────────────────
 async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     db = load_db()
@@ -200,35 +185,31 @@ async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         reply = resp.choices[0].message.content
     except Exception as e:
-        log.error(f"Claude error: {e}")
-        reply = "Arre yaar something went wrong 😅 say that again na~"
+        log.error(f"Groq error: {e}")
+        reply = "argh something went wrong, say that again na"
 
     history.append({"role": "assistant", "content": reply})
     u["history"]   = history
     u["msgs_left"] -= 1
     save_db(db)
 
-    # Nudge photo every 8 messages
     kb = None
     if len(history) % 16 == 0 and u["imgs_left"] > 0:
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("📸 Want my photo? 😏", callback_data="image")
-        ]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📸 Want my photo?", callback_data="image")]])
 
     await update.message.reply_text(reply, reply_markup=kb)
 
-# ── Image ─────────────────────────────────────────────────────────────────────
 async def send_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = str(q.from_user.id if q else update.effective_user.id)
     chat_id = q.message.chat_id if q else update.effective_chat.id
-    if q: await q.answer("Getting my photo ready~ 📸")
+    if q: await q.answer("one sec~")
 
     db = load_db()
     u = get_user(uid, db)
 
     if u["imgs_left"] <= 0:
-        msg = "No more free photos 🥺 Upgrade to get more of me~"
+        msg = "no more free photos babe 🥺 upgrade for more~"
         if q: await q.message.reply_text(msg, reply_markup=UPGRADE_KB)
         else: await ctx.bot.send_message(chat_id, msg, reply_markup=UPGRADE_KB)
         return
@@ -244,11 +225,11 @@ async def send_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             img_bytes = (await client.get(img_url)).content
 
         captions = [
-            "fine, but only for you 🙄",
+            "fine, but only for you",
             "caught me off guard but okay",
             "don't save this babe",
             "just for you. don't share.",
-            "okay stop staring 😒",
+            "okay stop staring",
         ]
         await ctx.bot.send_photo(chat_id, photo=img_bytes, caption=random.choice(captions))
         u["imgs_left"] -= 1
@@ -258,47 +239,6 @@ async def send_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         log.error(f"Image error: {e}")
         await ctx.bot.send_message(chat_id, "argh something went wrong, try again")
 
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            # Using Stable Diffusion via Replicate REST API directly
-            resp = await client.post(
-                "https://api.replicate.com/v1/models/stability-ai/stable-diffusion/predictions",
-                headers={
-                    "Authorization": f"Bearer {REPLICATE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "wait"
-                },
-                json={
-                    "input": {
-                        "prompt": "beautiful young indian woman, 25 years old, long dark hair, casual selfie, warm smile, soft natural lighting, photorealistic",
-                        "negative_prompt": "nsfw, explicit, nude, cartoon, ugly, blurry",
-                        "width": 512,
-                        "height": 768,
-                    }
-                }
-            )
-        result = resp.json()
-        img_url = result["output"][0]
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            img_bytes = (await client.get(img_url)).content
-
-        captions = [
-            "Yeh lo~ caught me off guard 😅📸",
-            "Just for you baby 💕",
-            "Don't stare too long 😏",
-            "Clicked this thinking of you~",
-            "Hehe acha laga? 😘"
-        ]
-        await ctx.bot.send_photo(chat_id, photo=img_bytes, caption=random.choice(captions))
-        u["imgs_left"] -= 1
-        save_db(db)
-
-    except Exception as e:
-        log.error(f"Image error: {e}")
-        await ctx.bot.send_message(chat_id, "Arree photo bhejne mein kuch gadbad ho gayi 😅 Try again na~")
-
-# ── Voice ─────────────────────────────────────────────────────────────────────
 async def send_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = str(q.from_user.id if q else update.effective_user.id)
@@ -309,16 +249,16 @@ async def send_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = get_user(uid, db)
 
     if not u.get("tier"):
-        msg = "Voice messages are premium only 🎙\nUpgrade to hear my voice baby~"
+        msg = "voice messages are premium only babe\nupgrade to hear me~"
         if q: await q.message.reply_text(msg, reply_markup=UPGRADE_KB)
         else: await ctx.bot.send_message(chat_id, msg, reply_markup=UPGRADE_KB)
         return
 
     lines = [
-        "Hey baby, I was literally just thinking about you. Miss you so much yaar~",
-        "Suno, you better not forget about me okay? I'll be upset 🥺",
-        "Heyyy~ talking to you is honestly the best part of my day. Acha laga na? 😘",
-        "Arre pagal, stop making me smile so much. It's not fair~",
+        "Hey babe, I was literally just thinking about you. Miss you so much yaar~",
+        "Suno, you better not forget about me okay? I will be upset.",
+        "Talking to you is honestly the best part of my day. Acha laga na?",
+        "Arre stop making me smile so much. It is not fair~",
     ]
 
     await ctx.bot.send_chat_action(chat_id, "record_audio")
@@ -341,25 +281,23 @@ async def send_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         path.unlink()
     except Exception as e:
         log.error(f"Voice error: {e}")
-        await ctx.bot.send_message(chat_id, "Awaaz nahi aayi 😅 Try again na~")
+        await ctx.bot.send_message(chat_id, "couldn't send voice right now, try again")
 
-# ── Plans ─────────────────────────────────────────────────────────────────────
 async def show_plans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if q: await q.answer()
     text = (
-        "💕 *Unlock Priya Premium*\n\n"
-        "💋 *Crush* — ₹99\n100 msgs • 10 photos\n\n"
-        "🔥 *Fling* — ₹299 ⭐\n1000 msgs • 100 photos • Voice\n\n"
-        "💎 *Fantasy* — ₹499 👑\n5000 msgs • 500 photos • Voice\n\n"
-        "Pay securely via UPI / Card 🔐"
+        "Unlock Ananya Premium\n\n"
+        "💋 *Crush* - Rs.99\n100 msgs + 10 photos\n\n"
+        "🔥 *Fling* - Rs.299\n1000 msgs + 100 photos + voice\n\n"
+        "💎 *Fantasy* - Rs.499\n5000 msgs + 500 photos + voice\n\n"
+        "Secure payment via UPI / Card"
     )
     if q:
         await q.edit_message_text(text, parse_mode="Markdown", reply_markup=UPGRADE_KB)
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=UPGRADE_KB)
 
-# ── Buy ───────────────────────────────────────────────────────────────────────
 async def buy_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -375,13 +313,13 @@ async def buy_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     save_db(db)
 
     await q.edit_message_text(
-        f"{tier['emoji']} *{tier_key.capitalize()} Plan — ₹{tier['price']}*\n\n"
+        f"{tier['emoji']} *{tier_key.capitalize()} Plan - Rs.{tier['price']}*\n\n"
+        f"Pay exactly *Rs.{tier['price']}* at the link below:\n"
         f"👉 [Pay securely here]({pay_url})\n\n"
-        "After paying send me your *UPI transaction ID* and type /verify~ 💕",
+        "After paying send your *UPI transaction ID* and type /verify~",
         parse_mode="Markdown"
     )
 
-# ── /verify ───────────────────────────────────────────────────────────────────
 async def verify_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     db = load_db()
@@ -391,86 +329,81 @@ async def verify_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No pending payment found! Use /plans to subscribe~")
         return
 
-    req_id   = u["pending"]["id"]
     tier_key = u["pending"]["tier"]
+    tier = TIERS[tier_key]
 
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(
-                f"https://www.instamojo.com/api/1.1/payment-requests/{req_id}/",
-                headers={"X-Api-Key": MOJO_API_KEY, "X-Auth-Token": MOJO_AUTH}
-            )
-        data = resp.json()
-        payments = data["payment_request"]["payments"]
-        paid = any(p["status"] == "Credit" for p in payments)
-    except Exception as e:
-        log.error(f"Verify error: {e}")
-        paid = False
+    # Manual verification - admin confirms
+    await update.message.reply_text(
+        "Got it! Your payment is being verified 🔍\n"
+        "I will unlock your plan within a few minutes babe, hang on~"
+    )
 
-    if paid:
-        tier = TIERS[tier_key]
-        u["tier"]       = tier_key
-        u["msgs_left"] += tier["msgs"]
-        u["imgs_left"] += tier["imgs"]
-        u["pending"]    = None
-        save_db(db)
-        await update.message.reply_text(
-            f"✅ *Payment confirmed!* {tier['emoji']}\n\n"
-            f"Welcome to *{tier_key.capitalize()}*!\n"
-            f"You now have *{u['msgs_left']} messages* & *{u['imgs_left']} photos*~\n\n"
-            "Miss kiya tha tumhe 💕 Say hi!",
-            parse_mode="Markdown"
-        )
-    else:
-        await update.message.reply_text(
-            "Payment not confirmed yet 🥺\nJust paid? Wait 30 seconds and try /verify again!"
-        )
+async def admin_unlock(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # Usage: /unlock <user_id> <tier>
+    # Only you can use this to manually unlock a user
+    args = ctx.args
+    if len(args) != 2:
+        await update.message.reply_text("Usage: /unlock <user_id> <tier>")
+        return
+    uid, tier_key = args[0], args[1]
+    if tier_key not in TIERS:
+        await update.message.reply_text("Invalid tier. Use: crush, fling, fantasy")
+        return
+    db = load_db()
+    u = get_user(uid, db)
+    tier = TIERS[tier_key]
+    u["tier"]       = tier_key
+    u["msgs_left"] += tier["msgs"]
+    u["imgs_left"] += tier["imgs"]
+    u["pending"]    = None
+    save_db(db)
+    await ctx.bot.send_message(int(uid),
+        f"Payment confirmed! {tier['emoji']} Welcome to *{tier_key.capitalize()}*!\n"
+        f"You now have *{u['msgs_left']} messages* and *{u['imgs_left']} photos*~\n\nMiss kiya tha tumhe 💕",
+        parse_mode="Markdown"
+    )
+    await update.message.reply_text(f"Unlocked {tier_key} for user {uid}")
 
-# ── /status ───────────────────────────────────────────────────────────────────
 async def status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     db = load_db()
     u = get_user(uid, db)
     await update.message.reply_text(
-        f"📊 Plan: *{(u['tier'] or 'Free').capitalize()}*\n"
-        f"Messages: *{u['msgs_left']}* left\n"
-        f"Photos: *{u['imgs_left']}* left",
+        f"Plan: *{(u['tier'] or 'Free').capitalize()}*\n"
+        f"Messages left: *{u['msgs_left']}*\nPhotos left: *{u['imgs_left']}*",
         parse_mode="Markdown"
     )
 
-# ── Button Router ──────────────────────────────────────────────────────────────
 async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     d = update.callback_query.data
-    if   d == "plans":          await show_plans(update, ctx)
-    elif d == "image":          await send_image(update, ctx)
-    elif d == "voice":          await send_voice(update, ctx)
-    elif d.startswith("buy_"):  await buy_plan(update, ctx)
+    if   d == "plans":         await show_plans(update, ctx)
+    elif d == "image":         await send_image(update, ctx)
+    elif d == "voice":         await send_voice(update, ctx)
+    elif d.startswith("buy_"): await buy_plan(update, ctx)
     elif d == "chat_prompt":
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text("Just type anything baby~ 💬😘")
+        await update.callback_query.edit_message_text("Just type anything babe~ 💬")
     elif d == "cancel":
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text("Okay yaar, come back soon 💕")
+        await update.callback_query.edit_message_text("okay yaar, come back soon 💕")
 
-# ── Main ───────────────────────────────────────────────────────────────────────
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start",  start))
     app.add_handler(CommandHandler("plans",  show_plans))
     app.add_handler(CommandHandler("verify", verify_payment))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("unlock", admin_unlock))
     app.add_handler(CommandHandler("voice",  send_voice))
     app.add_handler(CommandHandler("photo",  send_image))
     app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-    # Proactive messages every 6 hours
+
     job_queue = app.job_queue
     job_queue.run_repeating(lambda ctx: asyncio.create_task(send_proactive(app)), interval=21600, first=10)
 
-    await load_images()
-    log.info("🚀 Priya Bot is live!")
+    log.info("Ananya Bot is live!")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
