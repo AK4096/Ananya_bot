@@ -282,42 +282,19 @@ async def buy_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tier = TIERS[tier_key]
     uid = str(q.from_user.id)
 
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                "https://www.instamojo.com/api/1.1/payment-requests/",
-                headers={
-                    "X-Api-Key":    MOJO_API_KEY,
-                    "X-Auth-Token": MOJO_AUTH,
-                },
-                data={
-                    "purpose":       f"Priya – {tier_key.capitalize()}",
-                    "amount":        str(tier["price"]),
-                    "buyer_name":    q.from_user.first_name or "User",
-                    "redirect_url":  f"https://t.me/{ctx.bot.username}",
-                    "allow_repeated_payments": False,
-                    "send_email":    False,
-                    "send_sms":      False,
-                }
-            )
-        data = resp.json()
-        pay_url = data["payment_request"]["longurl"]
-        req_id  = data["payment_request"]["id"]
+    pay_url = f"https://www.instamojo.com/@Anu_S36/?data_name=Priya+{tier_key.capitalize()}&data_amount={tier['price']}&data_readonly=data_amount"
 
-        db = load_db()
-        u = get_user(uid, db)
-        u["pending"] = {"id": req_id, "tier": tier_key}
-        save_db(db)
+    db = load_db()
+    u = get_user(uid, db)
+    u["pending"] = {"id": f"manual_{uid}", "tier": tier_key}
+    save_db(db)
 
-        await q.edit_message_text(
-            f"{tier['emoji']} *{tier_key.capitalize()} Plan — ₹{tier['price']}*\n\n"
-            f"👉 [Pay securely here]({pay_url})\n\n"
-            "Done paying? Send /verify and I'll unlock everything~ 💕",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        log.error(f"Mojo error: {e}")
-        await q.edit_message_text("Payment setup failed 😅 Try again or contact support!")
+    await q.edit_message_text(
+        f"{tier['emoji']} *{tier_key.capitalize()} Plan — ₹{tier['price']}*\n\n"
+        f"👉 [Pay securely here]({pay_url})\n\n"
+        "After paying send me your *UPI transaction ID* and type /verify~ 💕",
+        parse_mode="Markdown"
+    )
 
 # ── /verify ───────────────────────────────────────────────────────────────────
 async def verify_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
