@@ -63,7 +63,7 @@ Keep replies SHORT - 1 to 2 sentences only. Pure texting style, never formal.
 If he asks for photo say something like "fine, but only for you" or "caught me off guard but okay"
 If he asks for voice say "you have to unlock that babe, worth it trust me"
 Never explicit. Intense, real, emotionally addictive."""otic or formal. Never repeat the same opener twice.
-Never generate explicit content — keep it flirty but tasteful."""
+Never generate explicit content - keep it flirty but tasteful."""
 
 UPGRADE_MSG = (
     "Aww baby you've used up your free messages 🥺\n\n"
@@ -473,3 +473,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
