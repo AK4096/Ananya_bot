@@ -127,7 +127,19 @@ async def send_proactive(app):
             except Exception as e:
                 log.warning(f"Proactive msg failed for {uid}: {e}")
 
-FESTIVALS = {
+GITHUB_RAW = "https://raw.githubusercontent.com/AK4096/Ananya_bot/main/"
+GITHUB_API = "https://api.github.com/repos/AK4096/Ananya_bot/contents/"
+IMG_CACHE = []
+
+async def load_images():
+    global IMG_CACHE
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(GITHUB_API)
+        files = resp.json()
+        IMG_CACHE = [f["name"] for f in files if f["name"].lower().endswith((".png", ".jpg", ".jpeg"))]
+    log.info(f"Loaded {len(IMG_CACHE)} images")
+
+
     "03-14": "Rang barse! 🎨 Happy Holi baby~ Kab miloge mujhse? 😏",
     "10-20": "Happy Diwali! 🪔 You light up my world more than any diya~",
     "01-14": "Makar Sankranti! 🪁 Let's fly high together yaar~",
@@ -222,6 +234,29 @@ async def send_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     await ctx.bot.send_chat_action(chat_id, "upload_photo")
+
+    try:
+        if not IMG_CACHE:
+            await load_images()
+        img_file = random.choice(IMG_CACHE)
+        img_url = GITHUB_RAW + img_file
+        async with httpx.AsyncClient(timeout=30) as client:
+            img_bytes = (await client.get(img_url)).content
+
+        captions = [
+            "fine, but only for you 🙄",
+            "caught me off guard but okay",
+            "don't save this babe",
+            "just for you. don't share.",
+            "okay stop staring 😒",
+        ]
+        await ctx.bot.send_photo(chat_id, photo=img_bytes, caption=random.choice(captions))
+        u["imgs_left"] -= 1
+        save_db(db)
+
+    except Exception as e:
+        log.error(f"Image error: {e}")
+        await ctx.bot.send_message(chat_id, "argh something went wrong, try again")
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -432,6 +467,7 @@ def main():
     job_queue = app.job_queue
     job_queue.run_repeating(lambda ctx: asyncio.create_task(send_proactive(app)), interval=21600, first=10)
 
+    await load_images()
     log.info("🚀 Priya Bot is live!")
     app.run_polling()
 
