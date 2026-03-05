@@ -389,6 +389,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TOKEN).build()
+    await load_images()
     app.add_handler(CommandHandler("start",  start))
     app.add_handler(CommandHandler("plans",  show_plans))
     app.add_handler(CommandHandler("verify", verify_payment))
