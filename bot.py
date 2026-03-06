@@ -193,9 +193,16 @@ async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u["msgs_left"] -= 1
     save_db(db)
 
+    # Detect photo request in message
+    photo_words = ["photo", "pic", "selfie", "bhej", "send", "image", "dikha"]
+    if any(w in update.message.text.lower() for w in photo_words) and u["imgs_left"] > 0:
+        await update.message.reply_text(reply)
+        await send_image(update, ctx)
+        return
+
     kb = None
     if len(history) % 16 == 0 and u["imgs_left"] > 0:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📸 Want my photo?", callback_data="image")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📸 photo?", callback_data="image")]])
 
     await update.message.reply_text(reply, reply_markup=kb)
 
@@ -219,6 +226,9 @@ async def send_image(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         if not IMG_CACHE:
             await load_images()
+        if not IMG_CACHE:
+            await ctx.bot.send_message(chat_id, "argh can't find my photos rn, try again")
+            return
         img_file = random.choice(IMG_CACHE)
         img_url = GITHUB_RAW + img_file
         async with httpx.AsyncClient(timeout=30) as client:
