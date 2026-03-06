@@ -450,7 +450,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 
     job_queue = app.job_queue
-    job_queue.run_repeating(lambda ctx: asyncio.create_task(send_proactive(app)), interval=21600, first=10)
+    job_queue.run_repeating(send_proactive, interval=21600, first=10)
 
     log.info("Ananya Bot is live!")
     app.run_polling()
