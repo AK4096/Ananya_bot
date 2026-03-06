@@ -387,9 +387,13 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer()
         await update.callback_query.edit_message_text("okay yaar, come back soon 💕")
 
-async def main():
+def main():
     app = Application.builder().token(TOKEN).build()
-    await load_images()
+
+    async def post_init(app):
+        await load_images()
+
+    app.post_init = post_init
     app.add_handler(CommandHandler("start",  start))
     app.add_handler(CommandHandler("plans",  show_plans))
     app.add_handler(CommandHandler("verify", verify_payment))
@@ -407,4 +411,4 @@ async def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
