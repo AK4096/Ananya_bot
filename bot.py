@@ -4,12 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
-)
-from groq import Groq
-
+from telegram.ext import 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
@@ -457,3 +452,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
